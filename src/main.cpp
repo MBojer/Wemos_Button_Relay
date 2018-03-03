@@ -23,6 +23,11 @@ WiFi.status() =
 
 #include <Arduino.h>
 
+// -------------------------------------------- Queue's --------------------------------------------
+#include <MB_Queue.h>
+
+MB_Queue Button_Queue(10);
+
 // ---------------------------------------- WiFi ----------------------------------------
 #include <ESP8266WiFi.h>
 
@@ -34,7 +39,7 @@ unsigned long WiFi_Timeout = 30000; // ms before marking connection as failed
 
 
 // ---------------------------------------- Button's ----------------------------------------
-const int Button_Pin[] {D5, D6, D7, D2};
+const int Button_Pin[] {D0, D5, D6, D7};
 const int Button_Number_Of = 4;
 bool Button_Pin_State[Button_Number_Of];
 
@@ -105,21 +110,33 @@ bool WiFi_Connect(const char* SSID, const char* Password) {
 
 
 
+// ---------------------------------------- Button_Interrupt() ----------------------------------------
+void Button_Interrupt() {
+  for (byte i = 0; i < Button_Number_Of; i++) {
+    if (digitalRead(Button_Pin[i]) == LOW) {
+      //Serial.println("Button " + String(i) + " pressed");
+      Button_Queue.Push(String(i));
+    }
+  }
+}
+
+
+
 
 
 // ---------------------------------------- Button_Check() ----------------------------------------
-byte Button_Check() {
-  for (byte i = 0; i < Button_Number_Of; i++) {
-    if (Button_Ignore_Input_Untill[i] < millis()) {
-      if (digitalRead(Button_Pin[i]) == LOW) {
-        Serial.println("Button " + String(i) + " pressed");
-        Button_Ignore_Input_Untill[i] = millis() + Button_Ignore_Input_For;
-        return i;
-      }
-    }
-  }
-  return 255;
-}
+// byte Button_Check() {
+//   for (byte i = 0; i < Button_Number_Of; i++) {
+//     if (Button_Ignore_Input_Untill[i] < millis()) {
+//       if (digitalRead(Button_Pin[i]) == LOW) {
+//         Serial.println("Button " + String(i) + " pressed");
+//         Button_Ignore_Input_Untill[i] = millis() + Button_Ignore_Input_For;
+//         return i;
+//       }
+//     }
+//   }
+//   return 255;
+// }
 
 
 // ---------------------------------------- Web_Server() ----------------------------------------
@@ -136,8 +153,11 @@ void setup() {
   Serial.println();
   Serial.println("Booting");
 
+
+  // ------------------------------ Interrupt ------------------------------
   for (byte i = 0; i < Button_Number_Of; i++) {
     pinMode(Button_Pin[i], INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(Button_Pin[i]), Button_Interrupt, HIGH);
   }
 
   pinMode(Relay_Pin, OUTPUT); // Relay PIN
@@ -148,29 +168,36 @@ void setup() {
   Serial.println(WiFi.localIP());
 
   Serial.println("Boot done");
-}
+} // Setup()
 
 
 // ---------------------------------------- loop() ----------------------------------------
 void loop() {
-  byte Button_Pressed = Button_Check();
 
-  if (Button_Pressed == 255) {
-    // 255 = No button pressed
-  }
-  else if (Button_Pressed == 0) { // ADD ME
+  Serial.println(Button_Queue.Peek_Queue());
 
-  }
-  else if (Button_Pressed == 1) { // ADD ME
+  delay(500);
 
-  }
-  else if (Button_Pressed == 2) { // Router OFF
-    digitalWrite(Relay_Pin, !digitalRead(Relay_Pin));
-    Serial.print("Relay changed state to ");
-    Serial.println(digitalRead(Relay_Pin));
-  }
-  else if (Button_Pressed == 3) { // ADD ME
 
-  }
 
-}
+  // byte Button_Pressed = 255;
+  //
+  // if (Button_Pressed == 255) {
+  //   // 255 = No button pressed
+  // }
+  // else if (Button_Pressed == 0) { // ADD ME
+  //
+  // }
+  // else if (Button_Pressed == 1) { // ADD ME
+  //
+  // }
+  // else if (Button_Pressed == 2) { // Router OFF
+  //   digitalWrite(Relay_Pin, !digitalRead(Relay_Pin));
+  //   Serial.print("Relay changed state to ");
+  //   Serial.println(digitalRead(Relay_Pin));
+  // }
+  // else if (Button_Pressed == 3) { // ADD ME
+  //
+  // }
+
+} // loop()
