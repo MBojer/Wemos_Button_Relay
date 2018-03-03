@@ -1,0 +1,176 @@
+/*
+Pins
+
+  D0 = 16
+  D1 = 5
+  D2 = 4
+  D3 = Not used
+  D4 =  Not used (BUILTIN_LED)
+  D5 = 14
+  D6 = 12
+  D7 = 13
+  D8 = 15
+
+
+
+WiFi.status() =
+  0 : WL_IDLE_STATUS when Wi-Fi is in process of changing between statuses
+  1 : WL_NO_SSID_AVAILin case configured SSID cannot be reached
+  3 : WL_CONNECTED after successful connection is established
+  4 : WL_CONNECT_FAILED if password is incorrect
+  6 : WL_DISCONNECTED if module is not configured in station mode
+*/
+
+#include <Arduino.h>
+
+// ---------------------------------------- WiFi ----------------------------------------
+#include <ESP8266WiFi.h>
+
+const char* WiFi_SSID = "NoInternetHere";
+const char* WiFi_Password = "NoPassword1!";
+String WiFi_Hostname = "BtnRel";
+
+unsigned long WiFi_Timeout = 30000; // ms before marking connection as failed
+
+
+// ---------------------------------------- Button's ----------------------------------------
+const int Button_Pin[] {D5, D6, D7, D2};
+const int Button_Number_Of = 4;
+bool Button_Pin_State[Button_Number_Of];
+
+unsigned long Button_Ignore_Input_Untill[4];
+unsigned int Button_Ignore_Input_For = 750; // Time in ms before a butten can triggered again
+
+
+// ---------------------------------------- Relay's ----------------------------------------
+const int Relay_Pin = D1;
+
+
+// ---------------------------------------- Servers ----------------------------------------
+WiFiServer WebServer(80);
+WiFiServer TelnetServer(23);
+
+
+
+
+
+
+
+// ---------------------------------------- WiFi_Reset() ----------------------------------------
+void WiFi_Reset() {
+  Serial.println("Erasing WiFi config");
+  ESP.eraseConfig();
+  delay(1500);
+
+  Serial.println("Configuring WiFi");
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoConnect(true);
+  WiFi.setAutoReconnect(true);
+  WiFi.hostname(WiFi_Hostname);
+}
+
+
+// // ---------------------------------------- WiFi_Connect() ----------------------------------------
+bool WiFi_Connect(const char* SSID, const char* Password) {
+
+  if (WiFi.status() == 3) {
+    Serial.print("Disconnecting from ");
+    Serial.println(WiFi.SSID());
+    WiFi_Reset();
+  }
+
+  Serial.print("Connecting to ");
+  Serial.print(SSID);
+  Serial.print(" ");
+
+  unsigned long WiFi_Connect_Start = millis() + WiFi_Timeout;
+
+  WiFi.begin(SSID, Password);
+
+  while (WiFi.status() != 3) {
+    if (WiFi_Connect_Start < millis()) {
+      Serial.println(" connection timeout.");
+      return false;
+    }
+    Serial.print(".");
+    delay (500);
+  }
+
+  Serial.println(" connected.");
+  return true;
+
+} // WiFi_Connect
+
+
+
+
+
+
+
+// ---------------------------------------- Button_Check() ----------------------------------------
+byte Button_Check() {
+  for (byte i = 0; i < Button_Number_Of; i++) {
+    if (Button_Ignore_Input_Untill[i] < millis()) {
+      if (digitalRead(Button_Pin[i]) == LOW) {
+        Serial.println("Button " + String(i) + " pressed");
+        Button_Ignore_Input_Untill[i] = millis() + Button_Ignore_Input_For;
+        return i;
+      }
+    }
+  }
+  return 255;
+}
+
+
+// ---------------------------------------- Web_Server() ----------------------------------------
+void Web_Server() {
+
+}
+
+
+
+
+// ---------------------------------------- setup() ----------------------------------------
+void setup() {
+  Serial.begin(112500);
+  Serial.println();
+  Serial.println("Booting");
+
+  for (byte i = 0; i < Button_Number_Of; i++) {
+    pinMode(Button_Pin[i], INPUT_PULLUP);
+  }
+
+  pinMode(Relay_Pin, OUTPUT); // Relay PIN
+
+  WiFi_Connect(WiFi_SSID, WiFi_Password);
+
+  Serial.print("My IP: ");
+  Serial.println(WiFi.localIP());
+
+  Serial.println("Boot done");
+}
+
+
+// ---------------------------------------- loop() ----------------------------------------
+void loop() {
+  byte Button_Pressed = Button_Check();
+
+  if (Button_Pressed == 255) {
+    // 255 = No button pressed
+  }
+  else if (Button_Pressed == 0) { // ADD ME
+
+  }
+  else if (Button_Pressed == 1) { // ADD ME
+
+  }
+  else if (Button_Pressed == 2) { // Router OFF
+    digitalWrite(Relay_Pin, !digitalRead(Relay_Pin));
+    Serial.print("Relay changed state to ");
+    Serial.println(digitalRead(Relay_Pin));
+  }
+  else if (Button_Pressed == 3) { // ADD ME
+
+  }
+
+}
