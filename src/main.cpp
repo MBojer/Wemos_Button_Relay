@@ -23,16 +23,39 @@ WiFi.status() =
 
 #include <Arduino.h>
 
+// ---------------------------------------- MQTT Broker ----------------------------------------
+#include "uMQTTBroker.h"
+
+unsigned int MQTT_Broker_Port = 1883;       // the standard MQTT broker port
+unsigned int MQTT_Broker_Max_Subscriptions = 30;
+unsigned int MQTT_Broker_Max_Retained_Topics = 30;
+
+
+// ---------------------------------------- MQTT Client ----------------------------------------
+unsigned long MQTT_KeepAlive_Delay = 60000; // 60000
+unsigned long MQTT_KeepAlive_At = MQTT_KeepAlive_Delay;
+
+
 // ---------------------------------------- WiFi ----------------------------------------
 #include <ESP8266WiFi.h>
 
+WiFiClient client;
+
 const char* WiFi_SSID = "NoInternetHere";
 const char* WiFi_Password = "NoPassword1!";
-String WiFi_Hostname = "BtnRel";
+String WiFi_Hostname = "BackupAP";
 
 unsigned long WiFi_Timeout = 4500; // ms before marking connection as failed
 unsigned long WiFi_Reconnect_At = 0;
 unsigned long WiFi_Reconnect_Delay = 20000; // ms before marking connection as failed
+
+
+// ---------------------------------------- WiFi_Backup_AP ----------------------------------------
+IPAddress AP_IP(192,168,0,2);
+IPAddress AP_Gateway(192,168,0,2);
+IPAddress AP_Subnet(255,255,255,0);
+
+byte Connected_Clients_Last = 0;
 
 
 // ---------------------------------------- Button's ----------------------------------------
@@ -46,13 +69,11 @@ unsigned int Button_Ignore_Input_For = 750; // Time in ms before a butten can tr
 // ---------------------------------------- Relay's ----------------------------------------
 const int Relay_Number_Of = 1;
 const int Relay_Pin[Relay_Number_Of] {D1};
-bool Relay_On_State = 0;
+bool Relay_On_State = LOW;
 
 
-
-// ---------------------------------------- ??? ----------------------------------------
+// ---------------------------------------- Web Server ----------------------------------------
 WiFiServer server(80);
-WiFiClient client;
 
 
 // ---------------------------------------- HTTP_GET() ----------------------------------------
@@ -79,6 +100,66 @@ String HTTP_GET(String Server, int Port, String URL) {
 }
 
 
+
+// ---------------------------------------- WiFi_Reset() ----------------------------------------
+void WiFi_Reset(bool Backup_AP_Active) {
+
+  if (Backup_AP_Active == true) {
+    Serial.println("Configuring WiFi as Backup AP");
+    WiFi.mode(WIFI_AP);
+    WiFi.enableAP(true);
+  }
+
+  else {
+    Serial.println("Configuring WiFi as client");
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_STA);
+    WiFi.enableAP(false);
+  }
+
+  WiFi.hostname(WiFi_Hostname);
+
+} // WiFi_Reset()
+
+
+// ---------------------------------------- WiFi_Connect() ----------------------------------------
+void WiFi_Client() {
+
+  WiFi_Reset(false);
+
+  Serial.print("Connecting to: ");
+  Serial.print(WiFi_SSID);
+  Serial.print(" ");
+
+  Serial.print("Starting WiFi Client ... ");
+  Serial.println(WiFi.begin(WiFi_SSID, WiFi_Password) ? "OK" : "Failed!");
+
+} // WiFi_Connect
+
+
+// ---------------------------------------- WiFi_Backup_AP() ----------------------------------------
+void WiFi_Backup_AP() {
+
+  WiFi_Reset(true);
+
+  Serial.print("Setting soft-AP configuration ... ");
+  Serial.println(WiFi.softAPConfig(AP_IP, AP_Gateway, AP_Subnet) ? "OK" : "Failed!");
+
+  Serial.print("Setting soft-AP ... ");
+  Serial.println(WiFi.softAP(WiFi_SSID, WiFi_Password) ? "OK" : "Failed!");
+
+} // AP()
+
+
+// ---------------------------------------- WiFi_Reset() ----------------------------------------
+void AP_Client_Check() {
+  if (Connected_Clients_Last != WiFi.softAPgetStationNum()) {
+    Serial.print("Number of clients conected to AP: ");
+    Serial.println(WiFi.softAPgetStationNum());
+    Connected_Clients_Last = WiFi.softAPgetStationNum();
+  }
+}
+
 // ---------------------------------------- Web_Server() ----------------------------------------
 void Web_Server() {
 
@@ -103,140 +184,96 @@ void Web_Server() {
   }
 } // Web_Server()
 
+void Web_Server_Check() {
+
+    // Check if a client has connected
+    WiFiClient client = server.available();
+    if (!client) {
+      return;
+    }
+
+    // Wait until the client sends some data
+    while(!client.available()){
+      delay(1);
+    }
+
+    // Read the first line of the request
+    String request = client.readStringUntil('\r');
+    Serial.println(request);
+    client.flush();
+
+    // Match the request
+
+    // remove "/light" and set light based on % number in get requist
+
+    if (request.indexOf("GET /Relay_") != -1) {
+
+      request.replace("GET /Relay_", "");
+      request.replace(" HTTP/1.1", "");
+
+      byte Selected_Relay = request.substring(0, request.indexOf("-")).toInt();
+
+      byte Selected_State = request.substring(request.indexOf("-") + 1, request.length()).toInt();
+
+      if (Selected_Relay == 99) {
+        for (byte i = 0; i < Relay_Number_Of; i++) {
+          digitalWrite(Relay_Pin[i], !Relay_On_State);
+        }
+        Serial.println("All OFF");
+      }
+
+      else {
+        Selected_Relay = Selected_Relay - 1; // Done to compensate for the array number beaingg -1 in relation to relay number
+
+        digitalWrite(Relay_Pin[Selected_Relay], Selected_Relay);
+
+        Serial.print("Relay " + String(Selected_Relay + 1) + ": ");
+        if (digitalRead(Selected_Relay) == 0) Serial.println("OFF");
+        else Serial.println("ON");
+
+      }
 
 
-// ---------------------------------------- WiFi_Reset() ----------------------------------------
-void WiFi_Reset() {
-  Serial.println("Erasing WiFi config");
-  ESP.eraseConfig();
-  delay(1500);
+    }
 
 
-  Serial.println("Configuring WiFi");
-  WiFi.enableAP(false);
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoConnect(false);
-  WiFi.setAutoReconnect(false);
-  WiFi.softAPdisconnect(true);
-  WiFi.hostname(WiFi_Hostname);
+    else Serial.println(request);
+
+    // Return the response
+    client.println("HTTP/1.1 200 OK");
+    client.println("Content-Type: text/html");
+    client.println(""); //  do not forget this one
+    client.println("<!DOCTYPE HTML>");
+    client.println("<html>");
+
+    client.println("Wemos Relay v0.1");
+    client.println("<br><br>");
+
+    for (byte i = 0; i < Relay_Number_Of; i++) {
+      client.print("Relay " + String(i + 1) + ": ");
+
+      if (Relay_On_State == true) {
+        if (digitalRead(Relay_Pin[i]) == LOW) client.print("OFF");
+        else client.print("ON");
+      }
+
+      else {
+        if (digitalRead(Relay_Pin[i]) == HIGH) client.print("OFF");
+        else client.print("ON");
+      }
+
+
+      client.println("<br>");
+    }
+
+
+    client.println("</html>");
+
 }
-
-
-// ---------------------------------------- WiFi_Connect() ----------------------------------------
-bool WiFi_Connect(const char* SSID, const char* Password) {
-
-  if (digitalRead(Relay_Pin[0]) != Relay_On_State) {
-    Serial.println("Relay not turned on, nothing to connect to.");
-    return false;
-  }
-
-  byte WiFi_State = WiFi.status();
-
-  // 3 : WL_CONNECTED after successful connection is established
-  // Aparantly someone wanted to reconnecto so resetting and connecting again
-  if (WiFi_State == 3) {
-    Serial.print("Disconnecting from: ");
-    Serial.println(WiFi.SSID());
-    WiFi_Reset();
-  }
-
-  Serial.print("Current WiFi status: ");
-  Serial.println(WiFi.status());
-
-  Serial.print("Connecting to: ");
-  Serial.print(SSID);
-  Serial.print(" ");
-
-  unsigned long WiFi_Connect_Start = millis() + WiFi_Timeout;
-
-  WiFi.begin(SSID, Password);
-
-  while (WiFi.status() != 3) {
-    if (WiFi_Connect_Start < millis()) {
-      Serial.println(" connection timeout.");
-      return false;
-    }
-    Serial.print(".");
-    delay (500);
-  }
-
-  Serial.println(" connected.");
-  return true;
-
-
-
-
-} // WiFi_Connect
-
-// ---------------------------------------- WiFi_Check() ----------------------------------------
-
-void WiFi_Check() {
-
-
-  if (WiFi_Reconnect_At > millis()) { // Wait for timer to expire
-    return;
-  }
-
-  byte WiFi_State = WiFi.status();
-
-  //   0 : WL_IDLE_STATUS when Wi-Fi is in process of changing between statuses
-  if (WiFi_State == 0) {
-    Serial.println("WiFi Idle");
-    WiFi_Connect(WiFi_SSID, WiFi_Password);
-  }
-
-  // 1 : WL_NO_SSID_AVAILin case configured SSID cannot be reached
-  else if (WiFi_State == 1) {
-    Serial.print("SSIID: ");
-    Serial.print(WiFi.SSID());
-    Serial.println(" - Out of range.");
-  }
-
-  // 3 : WL_CONNECTED after successful connection is established
-  else if (WiFi_State == 3) {
-
-    if (WiFi.gatewayIP().toString() == "0.0.0.0") { // No gateway assuming WiFi has lost connection
-      Serial.println("No gateway, assuming WiFi has lost connection, resetting WiFi.");
-      WiFi_Reset();
-      WiFi_Connect(WiFi_SSID, WiFi_Password);
-    }
-
-    else {
-      Serial.println("WiFi Connected.");
-      Web_Server();
-    }
-
-  }
-
-  // 4 : WL_CONNECT_FAILED if password is incorrect
-  else if (WiFi_State == 4) {
-    Serial.print("Password incorrect for SSID: ");
-    Serial.println(WiFi.SSID());
-    WiFi_Reset();
-    WiFi_Connect(WiFi_SSID, WiFi_Password);
-  }
-
-  // 6 : WL_DISCONNECTED if module is not configured in station mode
-  else if (WiFi_State == 6) {
-    Serial.println("WiFi not configured");
-    WiFi_Connect(WiFi_SSID, WiFi_Password);
-  }
-
-  else {
-    Serial.print("Current WiFi status: ");
-    Serial.println(WiFi.status());
-  }
-
-
-  WiFi_Reconnect_At = millis() + WiFi_Reconnect_Delay;
-}
-
-
-
 
 
 // ---------------------------------------- Button_Check() ----------------------------------------
-byte Button_Check() {
+byte Button_Pressed_Check() {
   for (byte i = 0; i < Button_Number_Of; i++) {
     if (Button_Ignore_Input_Untill[i] < millis()) {
       if (digitalRead(Button_Pin[i]) == LOW) {
@@ -250,16 +287,65 @@ byte Button_Check() {
 }
 
 
+// ---------------------------------------- Button_Check() ----------------------------------------
+void Button_Check() {
+  byte Button_Pressed = Button_Pressed_Check();
+
+  if (Button_Pressed == 255) {
+    // 255 = No button pressed
+    return;
+  }
+  else if (Button_Pressed == 0) { // Main Light
+    Serial.println("Button 1 - CHANGE ME");
+    // Serial.println(HTTP_GET("192.168.0.111", 80, "Dimmer_1-10"));
+    // Serial.print("Main light set to 10");
+  }
+  else if (Button_Pressed == 1) { // ADD ME
+    Serial.println("Button 2 - CHANGE ME");
+
+  }
+  else if (Button_Pressed == 2) { // Router OFF
+    digitalWrite(Relay_Pin[0], !digitalRead(Relay_Pin[0]));
+    Serial.print("Relay changed state to: ");
+    if (digitalRead(Relay_Pin[0]) == Relay_On_State) {
+      Serial.println("ON");
+
+      Serial.println("Switching from Backup AP to WiFi client");
+      WiFi_Client();
+    }
+    else {
+      Serial.println("OFF");
+
+      Serial.println("Switching WiFi client to Backup AP");
+      WiFi_Backup_AP();
+    }
+
+  }
+  else if (Button_Pressed == 3) { // All OFF
+    Serial.println("Button 4 - CHANGE ME");
+  }
+} // Button_Press_Check
 
 
+void MQTT_Local_Publish(String Topic, String Message) {
+  // MQTT_Local_Publish("Boat/System"; "Booting");
+
+  MQTT_local_publish((unsigned char *)Topic.c_str(), (unsigned char *)Message.c_str(), Message.length(), 0, 0);
+
+}
+
+void MQTT_KeepAlive() {
+  if (MQTT_KeepAlive_At < millis()) {
+    MQTT_Local_Publish("Boat/KeepAlive", WiFi_Hostname);
+    MQTT_KeepAlive_At = millis() + MQTT_KeepAlive_Delay;
+  }
+}
 
 // ---------------------------------------- setup() ----------------------------------------
 void setup() {
   Serial.begin(112500);
   Serial.println();
   Serial.println("Booting");
-
-  WiFi_Reset();
 
   for (byte i = 0; i < Button_Number_Of; i++) {
     pinMode(Button_Pin[i], INPUT_PULLUP);
@@ -270,8 +356,12 @@ void setup() {
     digitalWrite(Relay_Pin[i], !Relay_On_State);
   }
 
-  WiFi_Check();
+  WiFi_Backup_AP();
 
+  Serial.print("Starting MQTT Broker ... ");
+  Serial.println(MQTT_server_start(MQTT_Broker_Port, MQTT_Broker_Max_Subscriptions, MQTT_Broker_Max_Retained_Topics) ? "OK" : "Failed!");
+
+  MQTT_Local_Publish("Boat/System", "Booting");
   Serial.println("Boot done");
 }
 
@@ -279,114 +369,10 @@ void setup() {
 // ---------------------------------------- loop() ----------------------------------------
 void loop() {
 
-  WiFi_Check();
+  Button_Check();
 
-  byte Button_Pressed = Button_Check();
+  MQTT_KeepAlive();
 
-  if (Button_Pressed == 255) {
-    // 255 = No button pressed
-  }
-  else if (Button_Pressed == 0) { // Main Light
-    Serial.println(HTTP_GET("192.168.0.111", 80, "Dimmer_1-10"));
-    Serial.print("Main light set to 10");
-  }
-  else if (Button_Pressed == 1) { // ADD ME
+  AP_Client_Check();
 
-  }
-  else if (Button_Pressed == 2) { // Router OFF
-    digitalWrite(Relay_Pin[0], !digitalRead(Relay_Pin[0]));
-    Serial.print("Relay changed state to: ");
-    if (digitalRead(Relay_Pin[0]) == Relay_On_State) Serial.println("ON");
-    else  Serial.println("OFF");
-    WiFi_Reconnect_At = millis() + WiFi_Reconnect_Delay * 2;
-  }
-  else if (Button_Pressed == 3) { // All OFF
-
-  }
-
-  // Check if a client has connected
-  WiFiClient client = server.available();
-  if (!client) {
-    return;
-  }
-
-  // Wait until the client sends some data
-  while(!client.available()){
-    delay(1);
-  }
-
-  // Read the first line of the request
-  String request = client.readStringUntil('\r');
-  Serial.println(request);
-  client.flush();
-
-  // Match the request
-
-  // remove "/light" and set light based on % number in get requist
-
-  if (request.indexOf("GET /Relay_") != -1) {
-
-    request.replace("GET /Relay_", "");
-    request.replace(" HTTP/1.1", "");
-
-    byte Selected_Relay = request.substring(0, request.indexOf("-")).toInt();
-
-    byte Selected_State = request.substring(request.indexOf("-") + 1, request.length()).toInt();
-
-    if (Selected_Relay == 99) {
-      for (byte i = 0; i < Relay_Number_Of; i++) {
-        digitalWrite(Relay_Pin[i], !Relay_On_State);
-      }
-      Serial.println("All OFF");
-    }
-
-    else {
-      Selected_Relay = Selected_Relay - 1; // Done to compensate for the array number beaingg -1 in relation to relay number
-
-      digitalWrite(Relay_Pin[Selected_Relay], Selected_Relay);
-
-      Serial.print("Relay " + String(Selected_Relay + 1) + ": ");
-      if (digitalRead(Selected_Relay) == 0) Serial.println("OFF");
-      else Serial.println("ON");
-
-    }
-
-
-  }
-
-
-  else Serial.println(request);
-
-  // Return the response
-  client.println("HTTP/1.1 200 OK");
-  client.println("Content-Type: text/html");
-  client.println(""); //  do not forget this one
-  client.println("<!DOCTYPE HTML>");
-  client.println("<html>");
-
-  client.println("Wemos Relay v0.1");
-  client.println("<br><br>");
-
-  for (byte i = 0; i < Relay_Number_Of; i++) {
-    client.print("Relay " + String(i + 1) + ": ");
-
-    if (Relay_On_State == true) {
-      if (digitalRead(Relay_Pin[i]) == LOW) client.print("OFF");
-      else client.print("ON");
-    }
-
-    else {
-      if (digitalRead(Relay_Pin[i]) == HIGH) client.print("OFF");
-      else client.print("ON");
-    }
-
-
-    client.println("<br>");
-  }
-
-
-  client.println("</html>");
-
-  delay(1);
-
-}
+} // loop()
